@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <title>VisionTalk Live</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <style>
+        :root {
+            --bg: #0b0f19;
+            --panel: #111827;
+            --border: #1f2937;
+            --text: #e5e7eb;
+            --muted: #9ca3af;
+            --accent: #2563eb;
+            --danger: #dc2626;
+            --success: #16a34a;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont;
+            background: var(--bg);
+            color: var(--text);
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* ===== Header ===== */
+        header {
+            padding: 14px 20px;
+            background: var(--panel);
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        header h1 {
+            font-size: 16px;
+            font-weight: 600;
+            margin: 0;
+        }
+
+        .status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+            color: var(--muted);
+        }
+
+        .dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #6b7280;
+        }
+
+        .dot.active {
+            background: var(--success);
+        }
+
+        /* ===== Layout ===== */
+        main {
+            flex: 1;
+            display: grid;
+            grid-template-columns: 320px 1fr;
+            overflow: hidden;
+        }
+
+        /* ===== Side Panel ===== */
+        .side {
+            border-right: 1px solid var(--border);
+            padding: 16px;
+            background: #020617;
+        }
+
+        .side h3 {
+            font-size: 13px;
+            color: var(--muted);
+            margin-bottom: 8px;
+            font-weight: 500;
+        }
+
+        video {
+            width: 100%;
+            border-radius: 10px;
+            border: 1px solid var(--border);
+            background: black;
+        }
+
+        /* ===== Chat / Center ===== */
+        .center {
+            display: flex;
+            flex-direction: column;
+            padding: 20px;
+            gap: 12px;
+        }
+
+        .assistant-card {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            padding: 20px;
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+            color: var(--muted);
+        }
+
+        .assistant-card h2 {
+            color: var(--text);
+            font-size: 20px;
+            margin-bottom: 6px;
+        }
+
+        /* ===== Controls ===== */
+        .controls {
+            display: flex;
+            justify-content: center;
+            gap: 12px;
+        }
+
+        button {
+            padding: 12px 18px;
+            border-radius: 10px;
+            border: none;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+        }
+
+        .primary {
+            background: var(--accent);
+            color: white;
+        }
+
+        .danger {
+            background: var(--danger);
+            color: white;
+        }
+
+        button:disabled {
+            background: #374151;
+            cursor: not-allowed;
+        }
+
+        footer {
+            padding: 10px;
+            text-align: center;
+            font-size: 11px;
+            color: var(--muted);
+            border-top: 1px solid var(--border);
+        }
+    </style>
+</head>
+
+<body>
+
+    <header>
+        <h1>VisionTalk Live</h1>
+        <div class="status">
+            <span class="dot" id="statusDot"></span>
+            <span id="statusText">Disconnected</span>
+        </div>
+    </header>
+
+    <main>
+        <!-- Side Panel -->
+        <aside class="side">
+            <h3>Camera</h3>
+            <video id="camera" autoplay muted playsinline></video>
+        </aside>
+
+        <!-- Center Panel -->
+        <section class="center">
+            <div class="assistant-card">
+                <h2>Live AI Tutor</h2>
+                <p>
+                    Speak naturally.
+                    You can interrupt at any time.
+                    The agent can see your camera input.
+                </p>
+            </div>
+
+            <div class="controls">
+                <button class="primary" id="startBtn">Start Session</button>
+                <button class="danger" id="stopBtn" disabled>Stop</button>
+            </div>
+        </section>
+    </main>
+
+    <footer>
+        Gemini Live API • Google Cloud Run Deployment
+    </footer>
+
+    <script>
+        /* ========= CONFIG ========= */
+        const WS_URL = "wss://YOUR_CLOUD_RUN_WS_URL";
+
+        /* ========= STATE ========= */
+        let ws, stream, audioCtx, processor, running = false;
+        let frameTimer;
+
+        /* ========= UI ========= */
+        const statusDot = document.getElementById("statusDot");
+        const statusText = document.getElementById("statusText");
+
+        function setStatus(active, text) {
+            statusDot.classList.toggle("active", active);
+            statusText.textContent = text;
+        }
+
+        /* ========= START ========= */
+        document.getElementById("startBtn").onclick = async () => {
+            if (running) return;
+
+            ws = new WebSocket(WS_URL);
+
+            ws.onopen = async () => {
+                setStatus(true, "Connected");
+                await startMedia();
+                running = true;
+                toggleButtons(true);
+            };
+
+            ws.onclose = () => stopAgent();
+        };
+
+        /* ========= STOP ========= */
+        document.getElementById("stopBtn").onclick = stopAgent;
+
+        function stopAgent() {
+            if (!running) return;
+
+            running = false;
+            toggleButtons(false);
+            setStatus(false, "Disconnected");
+
+            if (processor) processor.disconnect();
+            if (audioCtx) audioCtx.close();
+            if (stream) stream.getTracks().forEach(t => t.stop());
+            if (ws) ws.close();
+            clearInterval(frameTimer);
+        }
+
+        /* ========= MEDIA ========= */
+        async function startMedia() {
+            stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+            document.getElementById("camera").srcObject = stream;
+
+            audioCtx = new AudioContext({ sampleRate: 16000 });
+            const src = audioCtx.createMediaStreamSource(stream);
+            processor = audioCtx.createScriptProcessor(4096, 1, 1);
+
+            src.connect(processor);
+            processor.connect(audioCtx.destination);
+
+            processor.onaudioprocess = e => {
+                if (!running) return;
+                const pcm = floatTo16PCM(e.inputBuffer.getChannelData(0));
+                ws.send(JSON.stringify({ type: "audio", chunk: bufToBase64(pcm) }));
+            };
+
+            frameTimer = setInterval(sendFrame, 2000);
+
+            ws.onmessage = msg => {
+                const data = JSON.parse(msg.data);
+                if (data.type === "audio") playAudio(data.chunk);
+            };
+        }
+
+        /* ========= IMAGE ========= */
+        function sendFrame() {
+            if (!running) return;
+            const video = document.getElementById("camera");
+            const canvas = document.createElement("canvas");
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            canvas.getContext("2d").drawImage(video, 0, 0);
+            ws.send(JSON.stringify({
+                type: "image",
+                frame: canvas.toDataURL("image/jpeg").split(",")[1]
+            }));
+        }
+
+        /* ========= AUDIO ========= */
+        function playAudio(base64) {
+            const audio = new Audio("data:audio/wav;base64," + base64);
+            audio.play();
+        }
+
+        /* ========= HELPERS ========= */
+        function toggleButtons(on) {
+            startBtn.disabled = on;
+            stopBtn.disabled = !on;
+        }
+
+        function floatTo16PCM(f32) {
+            const buf = new ArrayBuffer(f32.length * 2);
+            const view = new DataView(buf);
+            let o = 0;
+            for (let i = 0; i < f32.length; i++, o += 2) {
+                let s = Math.max(-1, Math.min(1, f32[i]));
+                view.setInt16(o, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+            }
+            return buf;
+        }
+
+        function bufToBase64(buf) {
+            return btoa(String.fromCharCode(...new Uint8Array(buf)));
+        }
+    </script>
+
+</body>
+
+</html>
