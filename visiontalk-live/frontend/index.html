@@ -206,7 +206,12 @@
 
     <script>
         /* ========= CONFIG ========= */
-        const WS_URL = "wss://YOUR_CLOUD_RUN_WS_URL";
+        const qs = new URLSearchParams(window.location.search);
+        const localDev = ["localhost", "127.0.0.1", ""].includes(window.location.hostname) || window.location.protocol === "file:";
+        const defaultWsUrl = localDev
+            ? "ws://localhost:8080"
+            : `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}`;
+        const WS_URL = qs.get("ws") || defaultWsUrl;
 
         /* ========= STATE ========= */
         let ws, stream, audioCtx, processor, running = false;
@@ -225,6 +230,7 @@
         document.getElementById("startBtn").onclick = async () => {
             if (running) return;
 
+            setStatus(false, "Connecting...");
             ws = new WebSocket(WS_URL);
 
             ws.onopen = async () => {
@@ -234,6 +240,7 @@
                 toggleButtons(true);
             };
 
+            ws.onerror = () => setStatus(false, "Connection error");
             ws.onclose = () => stopAgent();
         };
 
@@ -277,6 +284,7 @@
             ws.onmessage = msg => {
                 const data = JSON.parse(msg.data);
                 if (data.type === "audio") playAudio(data.chunk);
+                if (data.type === "error") setStatus(false, `Server error: ${data.error}`);
             };
         }
 
